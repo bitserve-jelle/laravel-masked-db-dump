@@ -10,11 +10,14 @@ class TableDefinition
 {
     const DUMP_FULL = 'full';
     const DUMP_SCHEMA = 'schema';
+    const DUMP_PARTIAL = 'partial';
 
     protected $table;
     protected $dumpType;
     protected $query;
     protected $columns = [];
+
+    private $extraDumpSql;
 
     public function __construct(Table $table)
     {
@@ -36,9 +39,21 @@ class TableDefinition
         return $this;
     }
 
+    public function partialDump()
+    {
+        $this->dumpType = static::DUMP_PARTIAL;
+
+        return $this;
+    }
+
     public function query(callable $callable)
     {
         $this->query = $callable;
+    }
+
+    public function dumpSql(callable $callable)
+    {
+        $this->extraDumpSql = $callable;
     }
 
     public function mask(string $column, string $maskCharacter = 'x')
@@ -75,7 +90,13 @@ class TableDefinition
 
     public function shouldDumpData()
     {
-        return $this->dumpType === static::DUMP_FULL;
+        return $this->dumpType === static::DUMP_FULL
+            || $this->dumpType === static::DUMP_PARTIAL;
+    }
+
+    public function shouldRecreateTable()
+    {
+        return $this->dumpType !== static::DUMP_PARTIAL;
     }
 
     public function modifyQuery($query)
@@ -84,5 +105,14 @@ class TableDefinition
             return;
         }
         call_user_func($this->query, $query);
+    }
+
+    public function extraDumpSql(): string
+    {
+        if (is_null($this->extraDumpSql)) {
+            return '';
+        }
+
+        return call_user_func($this->extraDumpSql);
     }
 }

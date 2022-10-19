@@ -25,16 +25,21 @@ class LaravelMaskedDump
     {
         $tables = $this->definition->getDumpTables();
 
-        $query = '';
+        $query = 'SET FOREIGN_KEY_CHECKS = 0;' . PHP_EOL;
 
         $overallTableProgress = $this->output->createProgressBar(count($tables));
 
         foreach ($tables as $tableName => $table) {
-            $query .= "DROP TABLE IF EXISTS `$tableName`;" . PHP_EOL;
-            $query .= $this->dumpSchema($table);
+            if ($table->shouldRecreateTable()) {
+                $query .= "DROP TABLE IF EXISTS `$tableName`;" . PHP_EOL;
+
+                $query .= $this->dumpSchema($table);
+            }
 
             if ($table->shouldDumpData()) {
                 $query .= $this->lockTable($tableName);
+
+                $query .= $table->extraDumpSql();
 
                 $query .= $this->dumpTableData($table);
 
@@ -43,6 +48,8 @@ class LaravelMaskedDump
 
             $overallTableProgress->advance();
         }
+
+        $query .= 'SET FOREIGN_KEY_CHECKS = 1;' . PHP_EOL;
 
         return $query;
     }
