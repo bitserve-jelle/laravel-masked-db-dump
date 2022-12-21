@@ -14,6 +14,10 @@ class DumpDatabaseCommand extends Command
     public function handle()
     {
         $definition = config('masked-dump.' . $this->option('definition'));
+
+        // https://github.com/beyondcode/laravel-masked-db-dump/pull/15/commits/216f78933d0ae55b719434726816234227acf5ae
+        $definition = is_callable($definition) ? call_user_func($definition) : $definition;
+
         $definition->load();
 
         $this->info('Starting Database dump');
