@@ -4,6 +4,7 @@ namespace BeyondCode\LaravelMaskedDumper;
 
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Schema\Schema;
+use Generator;
 use Illuminate\Console\OutputStyle;
 use BeyondCode\LaravelMaskedDumper\TableDefinitions\TableDefinition;
 
@@ -21,37 +22,37 @@ class LaravelMaskedDump
         $this->output = $output;
     }
 
-    public function dump()
+    public function dump(): Generator
     {
         $tables = $this->definition->getDumpTables();
 
-        $query = 'SET FOREIGN_KEY_CHECKS = 0;' . PHP_EOL;
+        yield 'SET FOREIGN_KEY_CHECKS = 0;' . PHP_EOL;
 
         $overallTableProgress = $this->output->createProgressBar(count($tables));
 
         foreach ($tables as $tableName => $table) {
             if ($table->shouldRecreateTable()) {
-                $query .= "DROP TABLE IF EXISTS `$tableName`;" . PHP_EOL;
+                yield "DROP TABLE IF EXISTS `$tableName`;" . PHP_EOL;
 
-                $query .= $this->dumpSchema($table);
+                yield $this->dumpSchema($table);
             }
 
             if ($table->shouldDumpData()) {
-                $query .= $this->lockTable($tableName);
+                yield $this->lockTable($tableName);
 
-                $query .= $table->extraDumpSql();
+                yield $table->extraDumpSql();
 
-                $query .= $this->dumpTableData($table);
+                foreach ($this->dumpTableData($table) as $statement) {
+                    yield $statement;
+                }
 
-                $query .= $this->unlockTable($tableName);
+                yield $this->unlockTable($tableName);
             }
 
             $overallTableProgress->advance();
         }
 
-        $query .= 'SET FOREIGN_KEY_CHECKS = 1;' . PHP_EOL;
-
-        return $query;
+        yield 'SET FOREIGN_KEY_CHECKS = 1;' . PHP_EOL;
     }
 
     protected function transformResultForInsert($row, TableDefinition $table)
@@ -96,35 +97,34 @@ class LaravelMaskedDump
             "UNLOCK TABLES;" . PHP_EOL;
     }
 
-    protected function dumpTableData(TableDefinition $table)
+    protected function dumpTableData(TableDefinition $table): Generator
     {
-        $query = '';
-
         $queryBuilder = $this->definition->getConnection()
             ->table($table->getDoctrineTable()->getName());
 
         $table->modifyQuery($queryBuilder);
 
-        $queryBuilder->get()
-            ->each(function ($row, $index) use ($table, &$query) {
-                $row = $this->transformResultForInsert((array)$row, $table);
-                $tableName = $table->getDoctrineTable()->getName();
+        $results = $queryBuilder->lazyById();
 
-                $query .= "INSERT INTO `${tableName}` (`" . implode('`, `', array_keys($row)) . '`) VALUES ';
-                $query .= "(";
+        foreach ($results as $result) {
+            $row = $this->transformResultForInsert((array)$result, $table);
+            $tableName = $table->getDoctrineTable()->getName();
 
-                $firstColumn = true;
-                foreach ($row as $value) {
-                    if (!$firstColumn) {
-                        $query .= ", ";
-                    }
-                    $query .= $value;
-                    $firstColumn = false;
+            $query = "INSERT INTO `${tableName}` (`" . implode('`, `', array_keys($row)) . '`) VALUES ';
+            $query .= "(";
+
+            $firstColumn = true;
+            foreach ($row as $value) {
+                if (!$firstColumn) {
+                    $query .= ", ";
                 }
+                $query .= $value;
+                $firstColumn = false;
+            }
 
-                $query .= ");" . PHP_EOL;
-            });
+            $query .= ");" . PHP_EOL;
 
-        return $query;
+            yield $query;
+        }
     }
 }
