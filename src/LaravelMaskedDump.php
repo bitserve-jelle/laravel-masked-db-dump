@@ -26,11 +26,17 @@ class LaravelMaskedDump
     {
         $tables = $this->definition->getDumpTables();
 
-        yield 'SET FOREIGN_KEY_CHECKS = 0;' . PHP_EOL;
+        yield 'SET AUTOCOMMIT = 0;' . PHP_EOL
+            . 'SET UNIQUE_CHECKS = 0;' . PHP_EOL
+            . 'SET FOREIGN_KEY_CHECKS = 0;' . PHP_EOL;
 
         $overallTableProgress = $this->output->createProgressBar(count($tables));
+        $overallTableProgress->setFormat("[%current%/%max%] <info>Exporting table...</info> <comment>%table%</comment>");
 
         foreach ($tables as $tableName => $table) {
+            $overallTableProgress->setMessage($tableName, 'table');
+            $overallTableProgress->display();
+
             if ($table->shouldRecreateTable()) {
                 yield "DROP TABLE IF EXISTS `$tableName`;" . PHP_EOL;
 
@@ -52,7 +58,12 @@ class LaravelMaskedDump
             $overallTableProgress->advance();
         }
 
-        yield 'SET FOREIGN_KEY_CHECKS = 1;' . PHP_EOL;
+        $overallTableProgress->setFormat("[%current%/%max%] <info>All tables exported!</info>");
+        $overallTableProgress->display();
+
+        yield 'SET FOREIGN_KEY_CHECKS = 1;' . PHP_EOL
+            . 'SET UNIQUE_CHECKS = 1;' . PHP_EOL
+            . 'SET AUTOCOMMIT = 1;' . PHP_EOL;
     }
 
     protected function transformResultForInsert($row, TableDefinition $table)
@@ -104,27 +115,34 @@ class LaravelMaskedDump
 
         $table->modifyQuery($queryBuilder);
 
-        $results = $queryBuilder->lazyById();
+        $chunks = $queryBuilder->lazyById()->chunk(5);
 
-        foreach ($results as $result) {
-            $row = $this->transformResultForInsert((array)$result, $table);
+        foreach ($chunks as $rows) {
             $tableName = $table->getDoctrineTable()->getName();
 
-            $query = "INSERT INTO `${tableName}` (`" . implode('`, `', array_keys($row)) . '`) VALUES ';
-            $query .= "(";
+            $row = $rows->first();
+            $columnNames = array_map(
+                function (string $column) {
+                    return "`$column`";
+                },
+                array_keys((array)$row),
+            );
 
-            $firstColumn = true;
-            foreach ($row as $value) {
-                if (!$firstColumn) {
-                    $query .= ", ";
-                }
-                $query .= $value;
-                $firstColumn = false;
-            }
+            $values = $rows->map(function ($row) use ($table) {
+                $row = $this->transformResultForInsert((array)$row, $table);
 
-            $query .= ");" . PHP_EOL;
+                return '(' . join(', ', $row) . ')';
+            })
+                ->join(', ');
 
-            yield $query;
+            $statement = sprintf(
+                'INSERT INTO `%s` (%s) VALUES %s;',
+                $tableName,
+                join(', ', $columnNames),
+                $values,
+            );
+
+            yield $statement . PHP_EOL;
         }
     }
 }
